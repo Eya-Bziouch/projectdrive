@@ -1,0 +1,58 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "moduleResolution": "NodeNext", // Must be here to override
+    "module": "NodeNext", // Must be here to override
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "jsx": "react-native",
+    "lib": [
+      "es2020"
+    ],
+    "target": "es2020",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "src/*"
+      ],
+      "@components/*": [
+        "src/components/*"
+      ],
+      "@screens/*": [
+        "src/screens/*"
+      ],
+      "@services/*": [
+        "src/services/*"
+      ],
+      "@context/*": [
+        "src/context/*"
+      ],
+      "@styles/*": [
+        "src/styles/*"
+      ],
+      "@utils/*": [
+        "src/utils/*"
+      ],
+      "@hooks/*": [
+        "src/hooks/*"
+      ],
+      "@assets/*": [
+        "src/assets/*"
+      ],
+      "@navigation/*": [
+        "src/navigation/*"
+      ]
+    }
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}
