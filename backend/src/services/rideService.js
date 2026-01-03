@@ -183,6 +183,20 @@ const joinRideService = async (rideId, userId) => {
         throw new Error('No available seats for this ride');
     }
 
+    // Validation 4: Cannot join past rides
+    const now = new Date();
+    const rideDateTime = new Date(ride.date);
+
+    // Combine date and time for accurate comparison
+    if (ride.time) {
+        const [hours, minutes] = ride.time.split(':').map(Number);
+        rideDateTime.setHours(hours || 0, minutes || 0, 0, 0);
+    }
+
+    if (now > rideDateTime) {
+        throw new Error('Cannot join a ride that has already passed');
+    }
+
     // Add user to passengers array
     ride.passengers.push(userId);
 
@@ -334,4 +348,6 @@ module.exports = {
     joinRideService,
     leaveRideService,
     cancelRideService,
+    getUserById,
+    getParticipatedRides
 };

@@ -57,10 +57,29 @@ const getDriverRides = async (req, res) => {
 
         const rides = await rideService.getRides(filters);
 
+        // Auto-expire old rides with no bookings before returning
+        const now = new Date();
+        for (const ride of rides) {
+            if (ride.status === 'active' && ride.passengers.length === 0) {
+                const rideDateTime = new Date(ride.date);
+                if (ride.time) {
+                    const [hours, minutes] = ride.time.split(':').map(Number);
+                    rideDateTime.setHours(hours || 0, minutes || 0, 0);
+                }
+                if (now > rideDateTime) {
+                    ride.status = 'expired';
+                    await ride.save();
+                }
+            }
+        }
+
+        // Filter to only return active rides
+        const activeRides = rides.filter(r => r.status === 'active');
+
         res.status(200).json({
             success: true,
-            count: rides.length,
-            rides
+            count: activeRides.length,
+            rides: activeRides
         });
     } catch (error) {
         console.error('Get driver rides error:', error);
@@ -91,10 +110,29 @@ const getPassengerRides = async (req, res) => {
 
         const rides = await rideService.getRides(filters);
 
+        // Auto-expire old rides with no bookings before returning
+        const now = new Date();
+        for (const ride of rides) {
+            if (ride.status === 'active' && ride.passengers.length === 0) {
+                const rideDateTime = new Date(ride.date);
+                if (ride.time) {
+                    const [hours, minutes] = ride.time.split(':').map(Number);
+                    rideDateTime.setHours(hours || 0, minutes || 0, 0);
+                }
+                if (now > rideDateTime) {
+                    ride.status = 'expired';
+                    await ride.save();
+                }
+            }
+        }
+
+        // Filter to only return active rides
+        const activeRides = rides.filter(r => r.status === 'active');
+
         res.status(200).json({
             success: true,
-            count: rides.length,
-            rides
+            count: activeRides.length,
+            rides: activeRides
         });
     } catch (error) {
         console.error('Get passenger rides error:', error);
@@ -153,14 +191,8 @@ const getMyHistory = async (req, res) => {
         res.status(200).json({
             success: true,
             history: {
-                hosted: {
-                    count: hosted.length,
-                    rides: hosted
-                },
-                joined: {
-                    count: joinedStrict.length,
-                    rides: joinedStrict
-                },
+                hosted: hosted,
+                joined: joinedStrict,
                 total: hosted.length + joinedStrict.length
             }
         });
@@ -183,10 +215,14 @@ const getUserPublicRides = async (req, res) => {
         const { userId } = req.params;
 
         // Hosted rides (Created by user)
-        const hostedRides = await rideService.getUserRides(userId);
+        const allHosted = await rideService.getUserRides(userId);
 
         // Joined rides (Participated in)
-        const joinedRides = await rideService.getParticipatedRides(userId);
+        const allJoined = await rideService.getParticipatedRides(userId);
+
+        // Filter to only show completed rides (consistent with my history)
+        const hostedRides = allHosted.filter(r => r.status === 'completed');
+        const joinedRides = allJoined.filter(r => r.status === 'completed');
 
         res.status(200).json({
             success: true,
@@ -474,6 +510,19 @@ const updateRide = async (req, res) => {
             });
         }
 
+        // Prevent changing critical fields if passengers already joined
+        if (ride.passengers.length > 0) {
+            const restrictedFields = ['departure', 'destination'];
+            const attemptedRestricted = updatesKeys.some(key => restrictedFields.includes(key));
+
+            if (attemptedRestricted) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Cannot change departure or destination after passengers have joined'
+                });
+            }
+        }
+
         // Logic check: Seats consistency
         if (updates.availableSeats !== undefined) {
             const seats = parseInt(updates.availableSeats);
@@ -529,6 +578,14 @@ const updateRide = async (req, res) => {
                         return res.status(400).json({
                             success: false,
                             message: 'Cannot mark ride as done before the scheduled date and time.'
+                        });
+                    }
+
+                    // Prevent completing rides with no passengers
+                    if (ride.passengers.length === 0) {
+                        return res.status(400).json({
+                            success: false,
+                            message: 'Cannot complete a ride with no passengers. Please cancel it instead.'
                         });
                     }
                 }
