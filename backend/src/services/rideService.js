@@ -16,13 +16,23 @@ const createRide = async (rideData, userId) => {
         date,
         time,
         availableSeats,
+        neededSeats,
         price,
         description
     } = rideData;
 
-    // Validate required fields
-    if (!type || !departure || !destination || !date || !time || !availableSeats) {
-        throw new Error('Missing required fields: type, departure, destination, date, time, availableSeats');
+    // Validate common required fields
+    if (!type || !departure || !destination || !date || !time) {
+        throw new Error('Missing required fields: type, departure, destination, date, time');
+    }
+
+    // Conditional seat validation based on type
+    if (type === 'DRIVER' && (availableSeats === undefined || availableSeats === null)) {
+        throw new Error('Missing required field: availableSeats for DRIVER ride');
+    }
+
+    if (type === 'PASSENGER' && (neededSeats === undefined || neededSeats === null)) {
+        throw new Error('Missing required field: neededSeats for PASSENGER ride');
     }
 
     // Get user to check if they can create DRIVER ride
@@ -56,9 +66,13 @@ const createRide = async (rideData, userId) => {
         destination,
         date,
         time,
-        availableSeats,
+        // Conditionally set seat fields
+        availableSeats: type === 'DRIVER' ? availableSeats : undefined,
+        neededSeats: type === 'PASSENGER' ? neededSeats : undefined,
+        originalSeats: type === 'DRIVER' ? availableSeats : undefined, // Track originally offered seats for drivers
         price: type === 'DRIVER' ? price : undefined,
-        description: description || ''
+        description: description || '',
+        passengers: [] // Initialize with empty passengers array
     });
 
     // Populate creator information (excluding password)
@@ -114,7 +128,9 @@ const getRides = async (filters = {}) => {
  * @returns {Promise<Object>} Ride details
  */
 const getRideById = async (rideId) => {
-    const ride = await Ride.findById(rideId).populate('creator', '-password');
+    const ride = await Ride.findById(rideId)
+        .populate('creator', '-password')
+        .populate('passengers', '-password'); // Also populate passengers
 
     if (!ride) {
         throw new Error('Ride not found');
@@ -136,9 +152,186 @@ const getUserRides = async (userId) => {
     return rides;
 };
 
+/**
+ * Join a ride - Add user to passengers array and decrement seats
+ * @param {string} rideId - Ride ID to join
+ * @param {string} userId - ID of the user joining
+ * @returns {Promise<Object>} Updated ride details
+ * @throws {Error} If validation fails
+ */
+const joinRideService = async (rideId, userId) => {
+    // Find the ride and populate creator
+    const ride = await Ride.findById(rideId).populate('creator', '-password');
+
+    if (!ride) {
+        throw new Error('Ride not found');
+    }
+
+    // Validation 1: User cannot join their own ride
+    if (ride.creator._id.toString() === userId.toString()) {
+        throw new Error('You cannot join your own ride');
+    }
+
+    // Validation 2: User cannot join the same ride twice
+    // Note: This only checks THIS specific ride. Users CAN join multiple rides from the same driver.
+    if (ride.hasPassenger(userId)) {
+        throw new Error('You have already joined this specific ride');
+    }
+
+    // Validation 3: Check if seats are available
+    if (!ride.canJoin()) {
+        throw new Error('No available seats for this ride');
+    }
+
+    // Add user to passengers array
+    ride.passengers.push(userId);
+
+    // Decrement available seats
+    ride.availableSeats -= 1;
+
+    // Save the updated ride
+    await ride.save();
+
+    // Populate passengers for the response
+    await ride.populate('passengers', '-password');
+
+    return ride;
+};
+
+/**
+ * Leave a ride (Cancel Booking)
+ * @param {string} rideId - Ride ID to leave
+ * @param {string} userId - ID of the user leaving
+ * @returns {Promise<Object>} Updated ride details
+ */
+const leaveRideService = async (rideId, userId) => {
+    const ride = await Ride.findById(rideId);
+
+    if (!ride) {
+        throw new Error('Ride not found');
+    }
+
+    // Validation: Ride must be active
+    if (ride.status !== 'active') {
+        throw new Error('Cannot leave a ride that is not active');
+    }
+
+    // Validation: Date must not be passed
+    const now = new Date();
+    const rideDate = new Date(ride.date);
+    if (ride.time) {
+        const [hours, minutes] = ride.time.split(':').map(Number);
+        rideDate.setHours(hours || 0, minutes || 0, 0, 0);
+    }
+
+    if (now > rideDate) {
+        throw new Error('Cannot leave a past ride');
+    }
+
+    // Validation: User must be in passengers list
+    // Use hardened check manually first
+    const passengerIndex = ride.passengers.findIndex(p =>
+        (p._id || p).toString() === userId.toString()
+    );
+
+    if (passengerIndex === -1) {
+        throw new Error('User is not a passenger in this ride');
+    }
+
+    // Remove user from passengers
+    ride.passengers.splice(passengerIndex, 1);
+
+    // Increment available seats, but forbid exceeding originalSeats
+    // (Safety check: Double seat restoration prevention)
+    if (ride.type === 'DRIVER') {
+        if (ride.availableSeats < ride.originalSeats) {
+            ride.availableSeats += 1;
+        } else {
+            // Logic error if seats are full but we are removing a passenger? 
+            // Ideally availableSeats should never be >= originalSeats if we have passengers.
+            // But if specific data corruption happened, we clamp it.
+            ride.availableSeats = ride.originalSeats;
+        }
+    }
+
+    await ride.save();
+
+    // Notify driver (Hook placeholder)
+    // sendNotification(ride.creator, "Passenger left your ride");
+
+    return ride;
+};
+
+/**
+ * Cancel a ride (Soft Delete)
+ * @param {string} rideId - Ride ID to cancel
+ * @param {string} userId - ID of the user cancelling (must be creator)
+ * @returns {Promise<Object>} Updated ride details
+ */
+const cancelRideService = async (rideId, userId) => {
+    const ride = await Ride.findById(rideId);
+
+    if (!ride) {
+        throw new Error('Ride not found');
+    }
+
+    // Authorization
+    if (ride.creator.toString() !== userId.toString()) {
+        throw new Error('Not authorized to cancel this ride');
+    }
+
+    // Idempotency: If already cancelled, just return it
+    if (ride.status === 'cancelled') {
+        return ride;
+    }
+
+    // Validation: Can only cancel active rides
+    if (ride.status !== 'active') {
+        throw new Error(`Cannot cancel a ${ride.status} ride`);
+    }
+
+    ride.status = 'cancelled';
+    await ride.save();
+
+    // Notify passengers (Hook placeholder)
+    // ride.passengers.forEach(p => sendNotification(p, "Ride cancelled"));
+
+    return ride;
+};
+
+/**
+ * Get user by ID
+ * @param {string} userId - User ID
+ * @returns {Promise<Object>} User details
+ */
+const getUserById = async (userId) => {
+    const user = await User.findById(userId).select('-password');
+
+    if (!user) {
+        throw new Error('User not found');
+    }
+
+    return user;
+};
+
+/**
+ * Get rides where the user is a passenger
+ * @param {string} userId
+ */
+const getParticipatedRides = async (userId) => {
+    // Find rides where passengers array contains userId
+    const rides = await Ride.find({ passengers: userId })
+        .populate('creator', '-password')
+        .sort({ createdAt: -1 });
+    return rides;
+};
+
 module.exports = {
     createRide,
     getRides,
     getRideById,
-    getUserRides
+    getUserRides,
+    joinRideService,
+    leaveRideService,
+    cancelRideService,
 };

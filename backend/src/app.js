@@ -5,6 +5,7 @@ const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const rideRoutes = require('./routes/rideRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 
 // Create Express app
 const app = express();
@@ -27,6 +28,13 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/rides', rideRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/upload', require('./routes/uploadRoutes'));
+
+// Serve uploaded files
+const path = require('path');
+// Assuming uploads is in the root backend directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // 404 handler for undefined routes
 app.use((req, res) => {

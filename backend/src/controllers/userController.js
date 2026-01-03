@@ -112,7 +112,50 @@ const updateProfile = async (req, res) => {
     }
 };
 
+/**
+ * Get public profile by ID
+ * @route GET /api/users/:id/profile
+ * @access Private
+ */
+const getPublicProfile = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = await User.findById(id).select('-password -cin'); // Exclude sensitive info like CIN or Password
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            user: {
+                _id: user._id,
+                fullName: user.fullName,
+                governorate: user.governorate,
+                phone: user.phone,
+                email: user.email,
+                profileImage: user.profileImage,
+                driverLicense: user.driverLicense,
+                vehicleMatricule: user.vehicleMatricule,
+                isDriver: user.isDriver,
+                createdAt: user.createdAt
+            }
+        });
+    } catch (error) {
+        console.error('Get public profile error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error while fetching public profile',
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     getProfile,
-    updateProfile
+    updateProfile,
+    getPublicProfile
 };

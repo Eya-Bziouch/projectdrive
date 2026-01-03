@@ -1,6 +1,7 @@
 const User = require('../models/User');
+const RefreshToken = require('../models/RefreshToken');
 const { hashPassword, comparePassword } = require('../utils/password');
-const { generateToken } = require('../utils/jwt');
+const { generateTokenPair, verifyRefreshToken, generateAccessToken } = require('../utils/jwt');
 
 /**
  * Register a new user
@@ -15,6 +16,7 @@ const register = async (req, res) => {
             phone,
             email,
             password,
+            passwordConfirm,
             profileImage,
             driverLicense,
             vehicleMatricule
@@ -25,6 +27,14 @@ const register = async (req, res) => {
             return res.status(400).json({
                 success: false,
                 message: 'Please provide all required fields: fullName, cin, governorate, phone, email, password'
+            });
+        }
+
+        // Validate password confirmation if provided
+        if (passwordConfirm && password !== passwordConfirm) {
+            return res.status(400).json({
+                success: false,
+                message: 'Passwords do not match'
             });
         }
 
@@ -56,14 +66,18 @@ const register = async (req, res) => {
             vehicleMatricule
         });
 
-        // Generate JWT token
-        const token = generateToken(user._id.toString());
+        // Generate access and refresh tokens
+        const { accessToken, refreshToken } = generateTokenPair(user._id.toString());
+
+        // Store refresh token in database
+        await RefreshToken.createToken(user._id.toString(), refreshToken, 7);
 
         // Return user info (without password)
         res.status(201).json({
             success: true,
             message: 'User registered successfully',
-            token,
+            accessToken,
+            refreshToken,
             user: {
                 id: user._id,
                 fullName: user.fullName,
@@ -72,6 +86,8 @@ const register = async (req, res) => {
                 phone: user.phone,
                 email: user.email,
                 profileImage: user.profileImage,
+                driverLicense: user.driverLicense,
+                vehicleMatricule: user.vehicleMatricule,
                 isDriver: user.isDriver,
                 createdAt: user.createdAt
             }
@@ -139,14 +155,18 @@ const login = async (req, res) => {
             });
         }
 
-        // Generate JWT token
-        const token = generateToken(user._id.toString());
+        // Generate access and refresh tokens
+        const { accessToken, refreshToken } = generateTokenPair(user._id.toString());
+
+        // Store refresh token in database
+        await RefreshToken.createToken(user._id.toString(), refreshToken, 7);
 
         // Return user info (without password)
         res.status(200).json({
             success: true,
             message: 'Login successful',
-            token,
+            accessToken,
+            refreshToken,
             user: {
                 id: user._id,
                 fullName: user.fullName,
@@ -155,6 +175,8 @@ const login = async (req, res) => {
                 phone: user.phone,
                 email: user.email,
                 profileImage: user.profileImage,
+                driverLicense: user.driverLicense,
+                vehicleMatricule: user.vehicleMatricule,
                 isDriver: user.isDriver,
                 createdAt: user.createdAt
             }
@@ -169,7 +191,136 @@ const login = async (req, res) => {
     }
 };
 
+/**
+ * Refresh access token using refresh token
+ * @route POST /api/auth/refresh
+ */
+const refreshAccessToken = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'Refresh token is required'
+            });
+        }
+
+        // Verify the refresh token JWT
+        let decoded;
+        try {
+            decoded = verifyRefreshToken(refreshToken);
+        } catch (error) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid or expired refresh token',
+                error: error.message
+            });
+        }
+
+        // Check if refresh token exists in database
+        const storedToken = await RefreshToken.verifyToken(refreshToken);
+
+        if (!storedToken) {
+            return res.status(401).json({
+                success: false,
+                message: 'Refresh token not found or expired'
+            });
+        }
+
+        // Verify user still exists
+        const user = await User.findById(decoded.userId);
+
+        if (!user) {
+            // Clean up invalid token
+            await RefreshToken.deleteToken(refreshToken);
+            return res.status(401).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Generate new access token
+        const newAccessToken = generateAccessToken(user._id.toString());
+
+        res.status(200).json({
+            success: true,
+            message: 'Access token refreshed successfully',
+            accessToken: newAccessToken
+        });
+    } catch (error) {
+        console.error('Token refresh error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during token refresh',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Logout user and invalidate refresh token
+ * @route POST /api/auth/logout
+ */
+const logout = async (req, res) => {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({
+                success: false,
+                message: 'Refresh token is required'
+            });
+        }
+
+        // Delete the refresh token from database
+        await RefreshToken.deleteToken(refreshToken);
+
+        res.status(200).json({
+            success: true,
+            message: 'Logged out successfully'
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during logout',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Logout from all devices (invalidate all refresh tokens)
+ * @route POST /api/auth/logout-all
+ */
+const logoutAll = async (req, res) => {
+    try {
+        // Get user ID from authenticated request
+        const userId = req.user.userId;
+
+        // Delete all refresh tokens for this user
+        await RefreshToken.deleteAllUserTokens(userId);
+
+        res.status(200).json({
+            success: true,
+            message: 'Logged out from all devices successfully'
+        });
+    } catch (error) {
+        console.error('Logout all error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error during logout',
+            error: error.message
+        });
+    }
+};
+
 module.exports = {
     register,
-    login
+    login,
+    refreshAccessToken,
+    logout,
+    logoutAll
 };
+

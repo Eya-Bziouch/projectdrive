@@ -65,6 +65,43 @@ userSchema.virtual('isDriver').get(function () {
 userSchema.set('toJSON', { virtuals: true });
 userSchema.set('toObject', { virtuals: true });
 
+/**
+ * Privacy method: Return public user data
+ * Used when showing user to non-authorized viewers
+ * 
+ * @returns {Object} Public user profile (name + photo only)
+ */
+userSchema.methods.toPublicJSON = function () {
+    return {
+        _id: this._id,
+        fullName: this.fullName,
+        profileImage: this.profileImage,
+        isDriver: this.isDriver
+    };
+};
+
+/**
+ * Privacy method: Return authorized user data
+ * Used when ride creator views passenger details
+ * 
+ * @returns {Object} Extended user profile (includes contact info)
+ */
+userSchema.methods.toAuthorizedJSON = function () {
+    return {
+        _id: this._id,
+        fullName: this.fullName,
+        profileImage: this.profileImage,
+        email: this.email,
+        phone: this.phone,
+        governorate: this.governorate,
+        isDriver: this.isDriver,
+        driverLicense: this.driverLicense,
+        vehicleMatricule: this.vehicleMatricule,
+        createdAt: this.createdAt
+    };
+};
+
 const User = mongoose.model('User', userSchema);
 
 module.exports = User;
+

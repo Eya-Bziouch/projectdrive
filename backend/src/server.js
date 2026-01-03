@@ -1,7 +1,8 @@
 const mongoose = require('mongoose');
 const app = require('./app');
 const { PORT, MONGO_URI } = require('./config/config');
-
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first')
 // Connect to MongoDB
 mongoose.connect(MONGO_URI)
   .then(() => {
